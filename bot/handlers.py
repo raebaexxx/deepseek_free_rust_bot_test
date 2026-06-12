@@ -18,14 +18,35 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 
+# patterns: (regex, replacement) applied in order
+_BLOCK_PATTERNS = [
+    (r'```([\s\S]*?)```', r'\1'),
+    (r'`([^`]+)`', r'\1'),
+    (r'\*\*\*(.+?)\*\*\*', r'\1'),
+    (r'\*\*(.+?)\*\*', r'\1'),
+    (r'(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)', r'\1'),
+    (r'~~(.+?)~~', r'\1'),
+    (r'^#{1,6}\s+', '', re.MULTILINE),
+    (r'^[-*_]{3,}\s*$', '', re.MULTILINE),
+    (r'^[-*+]\s+', '', re.MULTILINE),
+    (r'^\d+\.\s+', '', re.MULTILINE),
+    (r'^>\s?', '', re.MULTILINE),
+]
+
+
 def strip_markdown(text: str) -> str:
-    text = re.sub(r'```([\s\S]*?)```', r'\1', text)
-    text = re.sub(r'`([^`]+)`', r'\1', text)
-    text = re.sub(r'\*\*\*(.+?)\*\*\*', r'\1', text)
-    text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)
-    text = re.sub(r'(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)', r'\1', text)
-    text = re.sub(r'~~(.+?)~~', r'\1', text)
+    for pat_info in _BLOCK_PATTERNS:
+        pat, repl, *flags = pat_info
+        kwargs = {}
+        if flags:
+            kwargs["flags"] = flags[0]
+        text = re.sub(pat, repl, text, **kwargs)
     return text
+
+
+def _pre(text: str) -> str:
+    """wrap stripped content in <pre> tag"""
+    return f'<pre>{text.strip()}</pre>' if text.strip() else ""
 
 
 def markdown_to_html(text: str) -> str:
@@ -33,18 +54,18 @@ def markdown_to_html(text: str) -> str:
     text = text.replace("<", "&lt;")
     text = text.replace(">", "&gt;")
 
-    text = re.sub(
-        r'```(.*?)```',
-        lambda m: f'<pre>{m.group(1).strip()}</pre>',
-        text,
-        flags=re.DOTALL,
-    )
-
+    text = re.sub(r'```(.*?)```', lambda m: _pre(m.group(1)), text, flags=re.DOTALL)
     text = re.sub(r'`([^`]+)`', r'<code>\1</code>', text)
     text = re.sub(r'\*\*\*(.+?)\*\*\*', r'<b><i>\1</i></b>', text)
     text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
     text = re.sub(r'(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)', r'<i>\1</i>', text)
     text = re.sub(r'~~(.+?)~~', r'<s>\1</s>', text)
+
+    text = re.sub(r'^#{1,6}\s+', '', text, flags=re.MULTILINE)
+    text = re.sub(r'^[-*_]{3,}\s*$', '', text, flags=re.MULTILINE)
+    text = re.sub(r'^[-*+]\s+', '', text, flags=re.MULTILINE)
+    text = re.sub(r'^\d+\.\s+', '', text, flags=re.MULTILINE)
+    text = re.sub(r'^>\s?', '', text, flags=re.MULTILINE)
 
     return text
 
