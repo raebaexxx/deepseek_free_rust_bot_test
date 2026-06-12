@@ -4,7 +4,6 @@ import signal
 import sys
 
 from aiogram import Bot, Dispatcher
-from aiogram.client.default import DefaultBotProperties
 
 from .api import FreeDeepseekClient
 from .config import Config
@@ -26,10 +25,7 @@ async def main():
         datefmt="%H:%M:%S",
     )
 
-    bot = Bot(
-        token=config.telegram_token,
-        default=DefaultBotProperties(parse_mode="MarkdownV2"),
-    )
+    bot = Bot(token=config.telegram_token)
 
     history = ConversationHistory(config.history_limit)
     models = ModelManager(config.default_model)
