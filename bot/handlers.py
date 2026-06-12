@@ -77,8 +77,7 @@ async def cmd_start(message: Message, config: Config):
         "Отправь мне вопрос, и я отвечу через DeepSeek AI.\n\n"
         "Команды:\n"
         "/help — помощь\n"
-        "/new_chat — новый чат (сброс контекста DeepSeek)\n"
-        "/reset — сбросить историю\n"
+        "/new_chat — новый чат\n"
         "/model — выбрать модель"
     )
 
@@ -89,25 +88,9 @@ async def cmd_help(message: Message):
         "/start — начать\n"
         "/help — помощь\n"
         "/new_chat — новый чат (сброс контекста DeepSeek)\n"
-        "/reset — сбросить локальную историю\n"
         "/model — выбрать модель\n\n"
         "💡 Отправьте сообщение для диалога."
     )
-
-
-@router.message(Command("reset"))
-async def cmd_reset(
-    message: Message,
-    history: ConversationHistory,
-    sessions: SessionManager,
-):
-    chat_id = message.chat.id
-    logger.info("Reset requested for chat %s", chat_id)
-    await sessions.rotate(chat_id)
-    count = await history.clear(chat_id)
-    text = f"✅ История сброшена (удалено {count} сообщений)." if count else \
-           "✅ История пуста."
-    await message.answer(text)
 
 
 @router.message(Command("new_chat"))
@@ -156,7 +139,7 @@ async def cb_model(
     await query.answer()
 
     escaped = model.replace("_", "\\_").replace("-", "\\-").replace(".", "\\.")
-    text = f"✅ Модель: `{escaped}`"
+    text = f"✅ Модель: `{escaped}`\n🆕 Создан новый чат."
     if query.message:
         await query.message.edit_text(text, parse_mode="MarkdownV2")
 
