@@ -9,7 +9,7 @@ from aiogram import Bot, Dispatcher
 from .api import FreeDeepseekClient
 from .config import Config
 from .handlers import router
-from .storage import ConversationHistory, ModelManager
+from .storage import ConversationHistory, ModelManager, SessionManager
 
 logger = logging.getLogger(__name__)
 
@@ -50,10 +50,18 @@ async def main():
         CREATE INDEX IF NOT EXISTS idx_conversations_chat
         ON conversations(chat_id)
     """)
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS sessions (
+            chat_id INTEGER PRIMARY KEY,
+            session_id TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
     await db.commit()
 
     history = ConversationHistory(db, config.history_limit)
     models = ModelManager(db, config.default_model)
+    sessions = SessionManager(db)
     api = FreeDeepseekClient(
         config.api_url,
         timeout=config.api_timeout,
@@ -75,6 +83,7 @@ async def main():
             config=config,
             history=history,
             models=models,
+            sessions=sessions,
             api=api,
         )
     finally:

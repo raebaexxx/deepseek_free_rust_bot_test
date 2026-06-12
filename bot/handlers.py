@@ -11,7 +11,7 @@ from aiogram.exceptions import TelegramBadRequest
 from . import keyboards
 from .api import FreeDeepseekClient, FreeDeepseekError
 from .config import Config
-from .storage import ConversationHistory, ModelManager
+from .storage import ConversationHistory, ModelManager, SessionManager
 
 logger = logging.getLogger(__name__)
 
@@ -94,10 +94,17 @@ async def cmd_help(message: Message):
 
 
 @router.message(Command("reset"))
-async def cmd_reset(message: Message, history: ConversationHistory):
+async def cmd_reset(
+    message: Message,
+    history: ConversationHistory,
+    api: FreeDeepseekClient,
+    sessions: SessionManager,
+):
     chat_id = message.chat.id
     logger.info("Reset requested for chat %s", chat_id)
+    session_id = await sessions.get_or_create(chat_id)
     count = await history.clear(chat_id)
+    await api.reset_session(session_id)
     text = f"✅ История сброшена (удалено {count} сообщений, chat_id={chat_id})." if count else \
            f"✅ История пуста (chat_id={chat_id})."
     await message.answer(text)
@@ -121,11 +128,20 @@ async def cmd_model(message: Message, models: ModelManager):
 
 
 @router.callback_query(F.data.startswith("model:"))
-async def cb_model(query: CallbackQuery, models: ModelManager):
+async def cb_model(
+    query: CallbackQuery,
+    models: ModelManager,
+    history: ConversationHistory,
+    api: FreeDeepseekClient,
+    sessions: SessionManager,
+):
     model = query.data[6:]
     chat_id = query.message.chat.id if query.message else query.from_user.id
     await models.set(chat_id, model)
-    logger.info("Model set for chat %s: %s", chat_id, model)
+    session_id = await sessions.get_or_create(chat_id)
+    await history.clear(chat_id)
+    await api.reset_session(session_id)
+    logger.info("Model set for chat %s: %s, session reset", chat_id, model)
     await query.answer()
 
     escaped = model.replace("_", "\\_").replace("-", "\\-").replace(".", "\\.")
@@ -140,6 +156,7 @@ async def handle_message(
     history: ConversationHistory,
     models: ModelManager,
     api: FreeDeepseekClient,
+    sessions: SessionManager,
     config: Config,
 ):
     if message.text.startswith("/"):
@@ -153,10 +170,11 @@ async def handle_message(
     await history.add(chat_id, "user", text)
 
     model = await models.get(chat_id)
+    session_id = await sessions.get_or_create(chat_id)
     msgs = await history.get(chat_id)
     logger.debug(
-        "Chat %s: sending %d messages to model %s",
-        chat_id, len(msgs), model,
+        "Chat %s: sending %d messages to model %s (session=%s)",
+        chat_id, len(msgs), model, session_id,
     )
 
     sent = await message.answer("⏳ Думаю...")
@@ -167,7 +185,7 @@ async def handle_message(
 
     try:
         async with asyncio.timeout(config.api_timeout):
-            async for chunk in api.stream_chat(model, msgs):
+            async for chunk in api.stream_chat(session_id, model, msgs):
                 accumulated += chunk
                 now = time.monotonic()
                 if now - last_edit >= config.edit_interval:

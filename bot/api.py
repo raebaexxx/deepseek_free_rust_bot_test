@@ -19,6 +19,7 @@ class FreeDeepseekError(Exception):
 class FreeDeepseekClient:
     def __init__(self, api_url: str, timeout: float = 120.0, connect_timeout: float = 10.0):
         url = api_url.rstrip("/")
+        self._base_url = url
         self._chat_url = f"{url}/chat/completions"
         self._client = httpx.AsyncClient(
             timeout=httpx.Timeout(timeout, connect=connect_timeout),
@@ -29,15 +30,16 @@ class FreeDeepseekClient:
         await self._client.aclose()
 
     async def stream_chat(
-        self, model: str, messages: List[ChatMessage]
+        self, session_id: str, model: str, messages: List[ChatMessage]
     ) -> AsyncIterator[str]:
         body = {
             "model": model,
             "messages": [{"role": m.role, "content": m.content} for m in messages],
             "stream": True,
         }
+        headers = {"x-agent-session": session_id}
 
-        async with self._client.stream("POST", self._chat_url, json=body) as resp:
+        async with self._client.stream("POST", self._chat_url, json=body, headers=headers) as resp:
             if resp.status_code != 200:
                 text = await resp.aread()
                 detail = text.decode(errors="replace")[:500]
@@ -64,3 +66,12 @@ class FreeDeepseekClient:
                     content = delta.get("content")
                     if content:
                         yield content
+
+    async def reset_session(self, session_id: str) -> bool:
+        url = f"{self._base_url}/reset-session?agent={session_id}"
+        resp = await self._client.post(url)
+        if resp.status_code == 200:
+            logger.info("Session reset: %s", session_id)
+            return True
+        logger.warning("Session reset failed %s: %s", session_id, resp.status_code)
+        return False

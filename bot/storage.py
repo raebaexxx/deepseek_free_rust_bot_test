@@ -70,6 +70,35 @@ class ConversationHistory:
         return count
 
 
+class SessionManager:
+    def __init__(self, db: aiosqlite.Connection):
+        self._db = db
+
+    async def get_or_create(self, chat_id: int) -> str:
+        cursor = await self._db.execute(
+            "SELECT session_id FROM sessions WHERE chat_id = ?",
+            (chat_id,),
+        )
+        row = await cursor.fetchone()
+        if row:
+            return row[0]
+        session_id = f"tg_{chat_id}"
+        await self._db.execute(
+            "INSERT INTO sessions (chat_id, session_id) VALUES (?, ?)",
+            (chat_id, session_id),
+        )
+        await self._db.commit()
+        logger.info("Created session %s for chat %s", session_id, chat_id)
+        return session_id
+
+    async def remove(self, chat_id: int):
+        await self._db.execute(
+            "DELETE FROM sessions WHERE chat_id = ?",
+            (chat_id,),
+        )
+        await self._db.commit()
+
+
 class ModelManager:
     def __init__(self, db: aiosqlite.Connection, default: str):
         self._db = db
