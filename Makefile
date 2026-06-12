@@ -1,16 +1,9 @@
 APP_NAME = deepseek_free_rust_bot
 VERSION = $(shell grep '^version =' Cargo.toml | sed -E 's/.*"([^"]+)".*/\1/')
 
-# Для совместимости со старыми CPU на VPS (x86-64 baseline, без AVX/AVX2/FMA)
-RUSTFLAGS_PORTABLE = -C target-cpu=x86-64
-
 .PHONY: build
 build:
 	cargo build --release
-
-.PHONY: build-portable
-build-portable:
-	RUSTFLAGS="$(RUSTFLAGS_PORTABLE)" cargo build --release
 
 .PHONY: run
 run:
@@ -25,7 +18,7 @@ clean:
 	cargo clean
 
 .PHONY: release
-release: build-portable
+release: build
 	@echo "=== Creating GitHub release v$(VERSION) ==="
 	gh release create v$(VERSION) \
 		./target/release/$(APP_NAME) \
