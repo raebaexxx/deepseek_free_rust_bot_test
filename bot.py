@@ -137,8 +137,11 @@ async def cb_model(query: CallbackQuery):
 
 # --- Messages ---
 
-@dp.message(F.text & ~Command())
+@dp.message(F.text)
 async def handle_message(message: Message):
+    if message.text.startswith("/"):
+        return
+
     chat_id = message.chat.id
     text = message.text.strip()
 
