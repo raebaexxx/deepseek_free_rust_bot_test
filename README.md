@@ -2,7 +2,7 @@
 
 Telegram бот на Python (aiogram 3.x), который работает через [FreeDeepseekAPI](https://github.com/ForgetMeAI/FreeDeepseekAPI) — локальный прокси для DeepSeek Web Chat.
 
-Бот поддерживает **streaming ответов**, **историю диалогов** (20 сообщений) и **выбор модели** через inline-клавиатуру.
+Бот поддерживает **streaming ответов**, **историю диалогов** (20 сообщений), **выбор модели** через inline-клавиатуру, **Markdown-форматирование** ответов и **длинные сообщения** (Bot API 10.1+).
 
 ---
 
@@ -143,10 +143,10 @@ DEFAULT_MODEL=deepseek-chat
 
 ```bash
 source venv/bin/activate
-python3 bot.py
+python -m bot
 ```
 
-Бот начнёт принимать сообщения. Напиши `/start` в Telegram. Если FreeDeepseekAPI ещё не запущен — бот запустится, но API будет недоступен (ошибка).
+Бот начнёт принимать сообщения. Напиши `/start` в Telegram. Если FreeDeepseekAPI ещё не запущен — бот запустится, но API будет недоступен.
 
 ---
 
@@ -222,7 +222,7 @@ tmux new-session -d -s deepseek-api \
 ```bash
 cd ~/deepseek_free_rust_bot_test
 tmux new-session -d -s telegram-bot \
-    'source venv/bin/activate && python3 bot.py'
+    'source venv/bin/activate && python -m bot'
 ```
 
 **Полезные команды tmux:**
@@ -251,7 +251,7 @@ crontab -e
 
 ```
 @reboot tmux new-session -d -s deepseek-api 'cd /opt/FreeDeepseekAPI && NON_INTERACTIVE=1 npm start'
-@reboot tmux new-session -d -s telegram-bot 'cd /home/user/deepseek_free_rust_bot_test && /home/user/deepseek_free_rust_bot_test/venv/bin/python3 /home/user/deepseek_free_rust_bot_test/bot.py'
+@reboot tmux new-session -d -s telegram-bot 'cd /home/user/deepseek_free_rust_bot_test && /home/user/deepseek_free_rust_bot_test/venv/bin/python -m bot'
 ```
 
 **Важно:** замени `/home/user/` на реальный путь к проекту на твоём сервере (команда `pwd` покажет текущую директорию).
@@ -299,6 +299,7 @@ crontab -e
 - **Сброс истории** — `/reset` очищает контекст
 - **Обработка ошибок** — если API недоступен или вернул ошибку, бот покажет сообщение
 - **Нет компиляции** — Python работает сразу, никаких бинарников
+- **Bot API 10.1+** — длинные сообщения (без обрезания на 4096) и Markdown-форматирование ответов
 
 ---
 
@@ -341,11 +342,16 @@ npm run auth
 ## Структура проекта
 
 ```
-bot.py              # Telegram бот (весь код в одном файле)
-requirements.txt    # Python-зависимости (aiogram, httpx, python-dotenv)
-.env.example        # шаблон конфигурации
-.env                # конфигурация (не попадает в git)
-src/                # Rust-версия (неактивна, для истории)
+bot/
+├── __init__.py         # маркер пакета
+├── __main__.py         # точка входа: python -m bot
+├── config.py           # Config из .env
+├── storage.py          # ConversationHistory + ModelManager
+├── keyboards.py        # InlineKeyboardMarkup
+├── api.py              # FreeDeepseekClient (SSE streaming)
+└── handlers.py         # все хендлеры (aiogram router)
+requirements.txt        # Python-зависимости
+.env.example            # шаблон .env
 ```
 
 ---
