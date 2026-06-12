@@ -42,8 +42,20 @@ async def cmd_help(message: Message):
 
 @router.message(Command("reset"))
 async def cmd_reset(message: Message, history: ConversationHistory):
-    count = await history.clear(message.chat.id)
-    await message.answer(f"✅ История сброшена (удалено {count} сообщений).")
+    chat_id = message.chat.id
+    logger.info("Reset requested for chat %s", chat_id)
+    count = await history.clear(chat_id)
+    text = f"✅ История сброшена (удалено {count} сообщений, chat_id={chat_id})." if count else \
+           f"✅ История пуста (chat_id={chat_id})."
+    await message.answer(text)
+
+
+@router.message(Command("chat_id"))
+async def cmd_chat_id(message: Message):
+    await message.answer(
+        f"🆔 ID этого чата: `{message.chat.id}`\n"
+        f"👤 Ваш ID: `{message.from_user.id if message.from_user else '?'}`"
+    )
 
 
 @router.message(Command("model"))
@@ -60,6 +72,7 @@ async def cb_model(query: CallbackQuery, models: ModelManager):
     model = query.data[6:]
     chat_id = query.message.chat.id if query.message else query.from_user.id
     await models.set(chat_id, model)
+    logger.info("Model set for chat %s: %s", chat_id, model)
     await query.answer()
 
     escaped = model.replace("_", "\\_").replace("-", "\\-").replace(".", "\\.")
@@ -88,6 +101,10 @@ async def handle_message(
 
     model = await models.get(chat_id)
     msgs = await history.get(chat_id)
+    logger.debug(
+        "Chat %s: sending %d messages to model %s",
+        chat_id, len(msgs), model,
+    )
 
     sent = await message.answer("⏳ Думаю...")
 
