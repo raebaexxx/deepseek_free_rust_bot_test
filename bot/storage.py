@@ -1,19 +1,42 @@
 import logging
 import secrets
-from typing import List
+from typing import Any, List, Union
 
 import aiosqlite
 
 logger = logging.getLogger(__name__)
 
+ContentType = Union[str, list]
+
 
 class ChatMessage:
-    def __init__(self, role: str, content: str):
+    def __init__(self, role: str, content: ContentType):
         self.role = role
         self.content = content
 
     def to_dict(self) -> dict:
         return {"role": self.role, "content": self.content}
+
+    @classmethod
+    def from_text(cls, role: str, text: str):
+        return cls(role=role, content=text)
+
+    @classmethod
+    def from_photo(cls, caption: str, base64_data: str, mime: str = "image/jpeg"):
+        content: ContentType = [
+            {"type": "text", "text": caption or "Что на изображении?"},
+            {"type": "image_url", "image_url": {"url": f"data:{mime};base64,{base64_data}"}},
+        ]
+        return cls(role="user", content=content)
+
+    def display_text(self) -> str:
+        if isinstance(self.content, str):
+            return self.content
+        parts = []
+        for part in self.content:
+            if isinstance(part, dict) and part.get("type") == "text":
+                parts.append(part["text"])
+        return " | ".join(parts) if parts else "[медиа]"
 
 
 class ConversationHistory:

@@ -1,4 +1,6 @@
 import asyncio
+import base64
+import io
 import logging
 import re
 import time
@@ -18,7 +20,6 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 
-# patterns: (regex, replacement) applied in order
 _BLOCK_PATTERNS = [
     (r'```([\s\S]*?)```', r'\1'),
     (r'`([^`]+)`', r'\1'),
@@ -45,7 +46,6 @@ def strip_markdown(text: str) -> str:
 
 
 def _pre(text: str) -> str:
-    """wrap stripped content in <pre> tag"""
     return f'<pre>{text.strip()}</pre>' if text.strip() else ""
 
 
@@ -70,15 +70,105 @@ def markdown_to_html(text: str) -> str:
     return text
 
 
+async def _stream_response(
+    message: Message,
+    api: FreeDeepseekClient,
+    sessions: SessionManager,
+    history: ConversationHistory,
+    model: str,
+    chat_id: int,
+    user_display_text: str,
+    api_messages: list[ChatMessage],
+    config: Config,
+):
+    await history.add(chat_id, "user", user_display_text)
+
+    session_id = await sessions.get_or_create(chat_id)
+    logger.debug(
+        "Chat %s: streaming to model %s (session=%s)",
+        chat_id, model, session_id,
+    )
+
+    sent = await message.answer("⏳ Думаю...")
+
+    accumulated = ""
+    last_edit = 0.0
+    error = None
+
+    try:
+        async with asyncio.timeout(config.api_timeout):
+            async for chunk in api.stream_chat(session_id, model, api_messages):
+                accumulated += chunk
+                now = time.monotonic()
+                if now - last_edit >= config.edit_interval:
+                    try:
+                        clean = strip_markdown(accumulated[: config.max_message_length])
+                        await sent.edit_text(clean)
+                    except TelegramBadRequest:
+                        pass
+                    except Exception:
+                        pass
+                    last_edit = now
+    except FreeDeepseekError as e:
+        error = f"Ошибка API ({e.status})"
+        logger.error("Chat error chat=%s status=%s detail=%s", chat_id, e.status, e.detail)
+    except TimeoutError:
+        error = "Таймаут ожидания ответа от DeepSeek"
+    except Exception as e:
+        error = str(e)
+        logger.exception("Unexpected error chat=%s", chat_id)
+
+    if error:
+        try:
+            await sent.edit_text(f"⚠️ {error}")
+        except Exception:
+            pass
+        return
+
+    if not accumulated:
+        try:
+            await sent.edit_text("⚠️ Получен пустой ответ.")
+        except Exception:
+            pass
+        return
+
+    full = accumulated[: config.max_message_length]
+
+    html = markdown_to_html(full)
+    try:
+        await sent.edit_text(html, parse_mode="HTML")
+        logger.debug("Final edit: HTML ok (%d chars)", len(full))
+    except TelegramBadRequest as e:
+        logger.debug("HTML failed: %s; trying stripped", e)
+        cleaned = strip_markdown(full)
+        try:
+            await sent.edit_text(cleaned)
+            logger.debug("Final edit: stripped fallback (%d chars)", len(cleaned))
+        except Exception:
+            try:
+                await sent.edit_text(full)
+                logger.debug("Final edit: plain fallback (%d chars)", len(full))
+            except Exception:
+                pass
+    except Exception:
+        try:
+            await sent.edit_text(full)
+        except Exception:
+            pass
+
+    await history.add(chat_id, "assistant", accumulated)
+
+
 @router.message(Command("start"))
-async def cmd_start(message: Message, config: Config):
+async def cmd_start(message: Message):
     await message.answer(
         "👋 Привет! Я DeepSeek бот.\n\n"
         "Отправь мне вопрос, и я отвечу через DeepSeek AI.\n\n"
         "Команды:\n"
         "/help — помощь\n"
         "/new_chat — новый чат\n"
-        "/model — выбрать модель"
+        "/model — выбрать модель\n\n"
+        "📷 Поддерживаются фото и документы."
     )
 
 
@@ -89,7 +179,9 @@ async def cmd_help(message: Message):
         "/help — помощь\n"
         "/new_chat — новый чат (сброс контекста DeepSeek)\n"
         "/model — выбрать модель\n\n"
-        "💡 Отправьте сообщение для диалога."
+        "💡 Отправьте сообщение для диалога.\n"
+        "📷 Отправьте фото с подписью для анализа изображения.\n"
+        "📎 Отправьте текстовый файл для анализа содержимого."
     )
 
 
@@ -155,87 +247,105 @@ async def handle_message(
     if message.text.startswith("/"):
         return
 
-    chat_id = message.chat.id
     text = message.text.strip()
     if not text:
         return
 
-    await history.add(chat_id, "user", text)
-
+    chat_id = message.chat.id
     model = await models.get(chat_id)
-    session_id = await sessions.get_or_create(chat_id)
-    logger.debug(
-        "Chat %s: sending to model %s (session=%s)",
-        chat_id, model, session_id,
+
+    await _stream_response(
+        message, api, sessions, history, model, chat_id,
+        user_display_text=text,
+        api_messages=[ChatMessage("user", text)],
+        config=config,
     )
 
-    sent = await message.answer("⏳ Думаю...")
 
-    accumulated = ""
-    last_edit = 0.0
-    error = None
+@router.message(F.photo)
+async def handle_photo(
+    message: Message,
+    history: ConversationHistory,
+    models: ModelManager,
+    api: FreeDeepseekClient,
+    sessions: SessionManager,
+    config: Config,
+):
+    chat_id = message.chat.id
+    caption = (message.caption or "").strip()
 
-    try:
-        async with asyncio.timeout(config.api_timeout):
-            async for chunk in api.stream_chat(
-                session_id, model, [ChatMessage("user", text)]
-            ):
-                accumulated += chunk
-                now = time.monotonic()
-                if now - last_edit >= config.edit_interval:
-                    try:
-                        clean = strip_markdown(accumulated[: config.max_message_length])
-                        await sent.edit_text(clean)
-                    except TelegramBadRequest:
-                        pass
-                    except Exception:
-                        pass
-                    last_edit = now
-    except FreeDeepseekError as e:
-        error = f"Ошибка API ({e.status})"
-        logger.error("Chat error chat=%s status=%s detail=%s", chat_id, e.status, e.detail)
-    except TimeoutError:
-        error = "Таймаут ожидания ответа от DeepSeek"
-    except Exception as e:
-        error = str(e)
-        logger.exception("Unexpected error chat=%s", chat_id)
+    photo = message.photo[-1]
+    file = await message.bot.get_file(photo.file_id)
+    buf = io.BytesIO()
+    await message.bot.download(file, destination=buf)
+    b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
 
-    if error:
+    user_text = caption or "[фото]"
+    model = await models.get(chat_id)
+
+    await _stream_response(
+        message, api, sessions, history, model, chat_id,
+        user_display_text=user_text,
+        api_messages=[ChatMessage.from_photo(caption, b64)],
+        config=config,
+    )
+
+
+@router.message(F.document)
+async def handle_document(
+    message: Message,
+    history: ConversationHistory,
+    models: ModelManager,
+    api: FreeDeepseekClient,
+    sessions: SessionManager,
+    config: Config,
+):
+    chat_id = message.chat.id
+    doc = message.document
+    mime = doc.mime_type or ""
+    caption = (message.caption or "").strip()
+
+    file = await message.bot.get_file(doc.file_id)
+    buf = io.BytesIO()
+    await message.bot.download(file, destination=buf)
+    contents = buf.getvalue()
+
+    model = await models.get(chat_id)
+
+    if mime.startswith("image/"):
+        b64 = base64.b64encode(contents).decode("utf-8")
+        user_text = caption or f"[файл: {doc.file_name}]"
+        await _stream_response(
+            message, api, sessions, history, model, chat_id,
+            user_display_text=user_text,
+            api_messages=[ChatMessage.from_photo(caption, b64, mime)],
+            config=config,
+        )
+    elif mime.startswith("text/") or mime in (
+        "application/json", "application/xml", "application/javascript",
+        "application/x-python-code",
+    ):
         try:
-            await sent.edit_text(f"⚠️ {error}")
-        except Exception:
-            pass
-        return
-
-    if not accumulated:
-        try:
-            await sent.edit_text("⚠️ Получен пустой ответ.")
-        except Exception:
-            pass
-        return
-
-    full = accumulated[: config.max_message_length]
-
-    html = markdown_to_html(full)
-    try:
-        await sent.edit_text(html, parse_mode="HTML")
-        logger.debug("Final edit: HTML ok (%d chars)", len(full))
-    except TelegramBadRequest as e:
-        logger.debug("HTML failed: %s; trying stripped", e)
-        cleaned = strip_markdown(full)
-        try:
-            await sent.edit_text(cleaned)
-            logger.debug("Final edit: stripped fallback (%d chars)", len(cleaned))
-        except Exception:
-            try:
-                await sent.edit_text(full)
-                logger.debug("Final edit: plain fallback (%d chars)", len(full))
-            except Exception:
-                pass
-    except Exception:
-        try:
-            await sent.edit_text(full)
-        except Exception:
-            pass
-
-    await history.add(chat_id, "assistant", accumulated)
+            text = contents.decode("utf-8")
+        except UnicodeDecodeError:
+            text = contents.decode("utf-8", errors="replace")
+        full_text = f"{caption}\n\n```\n{text[:4000]}\n```" if caption else f"```\n{text[:4000]}\n```"
+        user_text = caption or f"[файл: {doc.file_name}]"
+        await _stream_response(
+            message, api, sessions, history, model, chat_id,
+            user_display_text=user_text,
+            api_messages=[ChatMessage("user", full_text)],
+            config=config,
+        )
+    else:
+        meta = f"Файл: {doc.file_name or 'unknown'}"
+        if doc.file_size:
+            size_kb = doc.file_size / 1024
+            meta += f" ({size_kb:.0f} KB)"
+        user_text = caption or meta
+        await _stream_response(
+            message, api, sessions, history, model, chat_id,
+            user_display_text=user_text,
+            api_messages=[ChatMessage("user", user_text)],
+            config=config,
+        )
