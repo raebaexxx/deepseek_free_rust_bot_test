@@ -1,9 +1,9 @@
 import asyncio
-import base64
-import io
 import logging
 import re
 import time
+
+import io
 
 from aiogram import F, Router
 from aiogram.filters import Command
@@ -273,20 +273,13 @@ async def handle_photo(
 ):
     chat_id = message.chat.id
     caption = (message.caption or "").strip()
-
-    photo = message.photo[-1]
-    file = await message.bot.get_file(photo.file_id)
-    buf = io.BytesIO()
-    await message.bot.download(file, destination=buf)
-    b64 = base64.b64encode(buf.getvalue()).decode("utf-8")
-
     user_text = caption or "[фото]"
     model = await models.get(chat_id)
 
     await _stream_response(
         message, api, sessions, history, model, chat_id,
         user_display_text=user_text,
-        api_messages=[ChatMessage.from_photo(caption, b64)],
+        api_messages=[ChatMessage("user", user_text)],
         config=config,
     )
 
@@ -304,31 +297,24 @@ async def handle_document(
     doc = message.document
     mime = doc.mime_type or ""
     caption = (message.caption or "").strip()
-
-    file = await message.bot.get_file(doc.file_id)
-    buf = io.BytesIO()
-    await message.bot.download(file, destination=buf)
-    contents = buf.getvalue()
-
     model = await models.get(chat_id)
 
     if mime.startswith("image/"):
-        b64 = base64.b64encode(contents).decode("utf-8")
         user_text = caption or f"[файл: {doc.file_name}]"
         await _stream_response(
             message, api, sessions, history, model, chat_id,
             user_display_text=user_text,
-            api_messages=[ChatMessage.from_photo(caption, b64, mime)],
+            api_messages=[ChatMessage("user", user_text)],
             config=config,
         )
     elif mime.startswith("text/") or mime in (
         "application/json", "application/xml", "application/javascript",
         "application/x-python-code",
     ):
-        try:
-            text = contents.decode("utf-8")
-        except UnicodeDecodeError:
-            text = contents.decode("utf-8", errors="replace")
+        file = await message.bot.get_file(doc.file_id)
+        buf = io.BytesIO()
+        await message.bot.download(file, destination=buf)
+        text = buf.getvalue().decode("utf-8", errors="replace")
         full_text = f"{caption}\n\n```\n{text[:4000]}\n```" if caption else f"```\n{text[:4000]}\n```"
         user_text = caption or f"[файл: {doc.file_name}]"
         await _stream_response(
