@@ -273,13 +273,14 @@ async def handle_photo(
 ):
     chat_id = message.chat.id
     caption = (message.caption or "").strip()
-    user_text = caption or "[фото]"
+    if not caption:
+        await message.answer("📷 Пожалуйста, добавьте текстовое описание к фото.")
+        return
     model = await models.get(chat_id)
-
     await _stream_response(
         message, api, sessions, history, model, chat_id,
-        user_display_text=user_text,
-        api_messages=[ChatMessage("user", user_text)],
+        user_display_text=caption,
+        api_messages=[ChatMessage("user", caption)],
         config=config,
     )
 
@@ -300,11 +301,13 @@ async def handle_document(
     model = await models.get(chat_id)
 
     if mime.startswith("image/"):
-        user_text = caption or f"[файл: {doc.file_name}]"
+        if not caption:
+            await message.answer("📷 Пожалуйста, добавьте текстовое описание к изображению.")
+            return
         await _stream_response(
             message, api, sessions, history, model, chat_id,
-            user_display_text=user_text,
-            api_messages=[ChatMessage("user", user_text)],
+            user_display_text=caption,
+            api_messages=[ChatMessage("user", caption)],
             config=config,
         )
     elif mime.startswith("text/") or mime in (
