@@ -1,4 +1,5 @@
 import logging
+import secrets
 from typing import List
 
 import aiosqlite
@@ -89,6 +90,17 @@ class SessionManager:
         )
         await self._db.commit()
         logger.info("Created session %s for chat %s", session_id, chat_id)
+        return session_id
+
+    async def rotate(self, chat_id: int) -> str:
+        suffix = secrets.token_hex(4)
+        session_id = f"tg_{chat_id}_{suffix}"
+        await self._db.execute(
+            "INSERT OR REPLACE INTO sessions (chat_id, session_id) VALUES (?, ?)",
+            (chat_id, session_id),
+        )
+        await self._db.commit()
+        logger.info("Rotated session for chat %s: %s", chat_id, session_id)
         return session_id
 
     async def remove(self, chat_id: int):
