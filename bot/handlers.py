@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 import time
 
 from aiogram import F, Router
@@ -15,6 +16,26 @@ from .storage import ConversationHistory, ModelManager
 logger = logging.getLogger(__name__)
 
 router = Router()
+
+
+def markdown_to_html(text: str) -> str:
+    text = text.replace("&", "&amp;")
+    text = text.replace("<", "&lt;")
+    text = text.replace(">", "&gt;")
+
+    text = re.sub(
+        r'```(.*?)```',
+        lambda m: f'<pre>{m.group(1).strip()}</pre>',
+        text,
+        flags=re.DOTALL,
+    )
+
+    text = re.sub(r'`([^`]+)`', r'<code>\1</code>', text)
+    text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
+    text = re.sub(r'(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)', r'<i>\1</i>', text)
+    text = re.sub(r'~~(.+?)~~', r'<s>\1</s>', text)
+
+    return text
 
 
 @router.message(Command("start"))
@@ -149,8 +170,9 @@ async def handle_message(
         return
 
     full = accumulated[: config.max_message_length]
+    html = markdown_to_html(full)
     try:
-        await sent.edit_text(full, parse_mode="MarkdownV2")
+        await sent.edit_text(html, parse_mode="HTML")
     except TelegramBadRequest:
         try:
             await sent.edit_text(full)
