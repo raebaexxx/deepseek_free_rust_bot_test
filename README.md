@@ -120,7 +120,32 @@ scp .env user@your-vps:/home/user/deepseek_free_rust_bot_test/
 
 На VPS Rust устанавливать **не нужно**.
 
-### Вариант B — собрать прямо на VPS
+### Вариант B — скачать готовый релиз с GitHub (ещё проще)
+
+**На домашнем ПК** (однократно, если ещё нет релиза):
+
+```bash
+make build
+make release
+```
+
+**На VPS:**
+
+```bash
+mkdir -p /home/user/deepseek_free_rust_bot_test
+cd /home/user/deepseek_free_rust_bot_test
+
+# Скачать бинарник
+curl -L https://github.com/raebaexxx/deepseek_free_rust_bot_test/releases/latest/download/deepseek_free_rust_bot -o deepseek_free_rust_bot
+chmod +x deepseek_free_rust_bot
+
+# Создать .env
+nano .env   # вставить TELOXIDE_TOKEN
+```
+
+Rust на VPS **не нужен**.
+
+### Вариант C — собрать прямо на VPS
 
 Если решили собирать на VPS:
 
@@ -216,6 +241,41 @@ tmux attach -t telegram-bot        # подключиться к сессии б
 tmux attach -t deepseek-api        # подключиться к сессии API
 tmux kill-session -t telegram-bot  # остановить сессию
 Ctrl+B, D                          # открепиться от сессии
+```
+
+---
+
+## Релизы
+
+### Создать новый релиз (на своём ПК)
+
+```bash
+# 1. Собрать
+make build
+
+# 2. Создать релиз на GitHub
+make release
+```
+
+Команда `make release` автоматически:
+- собирает `cargo build --release`
+- создаёт GitHub Release с тегом `v{version}` из `Cargo.toml`
+- загружает бинарник как asset релиза
+
+> Требуется [GitHub CLI](https://cli.github.com/) (`gh`) и авторизация: `gh auth login`
+
+### Скачать готовый бинарник на VPS
+
+```bash
+curl -L https://github.com/raebaexxx/deepseek_free_rust_bot_test/releases/latest/download/deepseek_free_rust_bot -o deepseek_free_rust_bot
+chmod +x deepseek_free_rust_bot
+```
+
+### Обновить версию
+
+```bash
+make bump-version  # ввести новую версию
+make release       # собрать и загрузить
 ```
 
 ---
