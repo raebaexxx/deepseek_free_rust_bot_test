@@ -18,6 +18,16 @@ logger = logging.getLogger(__name__)
 router = Router()
 
 
+def strip_markdown(text: str) -> str:
+    text = re.sub(r'```([\s\S]*?)```', r'\1', text)
+    text = re.sub(r'`([^`]+)`', r'\1', text)
+    text = re.sub(r'\*\*\*(.+?)\*\*\*', r'\1', text)
+    text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)
+    text = re.sub(r'(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)', r'\1', text)
+    text = re.sub(r'~~(.+?)~~', r'\1', text)
+    return text
+
+
 def markdown_to_html(text: str) -> str:
     text = text.replace("&", "&amp;")
     text = text.replace("<", "&lt;")
@@ -31,6 +41,7 @@ def markdown_to_html(text: str) -> str:
     )
 
     text = re.sub(r'`([^`]+)`', r'<code>\1</code>', text)
+    text = re.sub(r'\*\*\*(.+?)\*\*\*', r'<b><i>\1</i></b>', text)
     text = re.sub(r'\*\*(.+?)\*\*', r'<b>\1</b>', text)
     text = re.sub(r'(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)', r'<i>\1</i>', text)
     text = re.sub(r'~~(.+?)~~', r'<s>\1</s>', text)
@@ -140,7 +151,8 @@ async def handle_message(
                 now = time.monotonic()
                 if now - last_edit >= config.edit_interval:
                     try:
-                        await sent.edit_text(accumulated[: config.max_message_length])
+                        clean = strip_markdown(accumulated[: config.max_message_length])
+                        await sent.edit_text(clean)
                     except TelegramBadRequest:
                         pass
                     except Exception:
@@ -170,14 +182,23 @@ async def handle_message(
         return
 
     full = accumulated[: config.max_message_length]
+
     html = markdown_to_html(full)
     try:
         await sent.edit_text(html, parse_mode="HTML")
-    except TelegramBadRequest:
+        logger.debug("Final edit: HTML ok (%d chars)", len(full))
+    except TelegramBadRequest as e:
+        logger.debug("HTML failed: %s; trying stripped", e)
+        cleaned = strip_markdown(full)
         try:
-            await sent.edit_text(full)
+            await sent.edit_text(cleaned)
+            logger.debug("Final edit: stripped fallback (%d chars)", len(cleaned))
         except Exception:
-            pass
+            try:
+                await sent.edit_text(full)
+                logger.debug("Final edit: plain fallback (%d chars)", len(full))
+            except Exception:
+                pass
     except Exception:
         try:
             await sent.edit_text(full)
