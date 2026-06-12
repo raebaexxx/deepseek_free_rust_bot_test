@@ -17,6 +17,11 @@ from .storage import ChatMessage, ConversationHistory, ModelManager, SessionMana
 
 logger = logging.getLogger(__name__)
 
+try:
+    import fitz
+except ImportError:
+    fitz = None
+
 router = Router()
 
 
@@ -320,6 +325,30 @@ async def handle_document(
         text = buf.getvalue().decode("utf-8", errors="replace")
         full_text = f"{caption}\n\n```\n{text[:4000]}\n```" if caption else f"```\n{text[:4000]}\n```"
         user_text = caption or f"[файл: {doc.file_name}]"
+        await _stream_response(
+            message, api, sessions, history, model, chat_id,
+            user_display_text=user_text,
+            api_messages=[ChatMessage("user", full_text)],
+            config=config,
+        )
+    elif mime == "application/pdf":
+        if fitz is None:
+            await message.answer("📄 PDF-поддержка недоступна (установите PyMuPDF: pip install PyMuPDF)")
+            return
+        file = await message.bot.get_file(doc.file_id)
+        buf = io.BytesIO()
+        await message.bot.download(file, destination=buf)
+        pdf_text = ""
+        try:
+            pdf_doc = fitz.open(stream=buf.getvalue(), filetype="pdf")
+            for page in pdf_doc:
+                pdf_text += page.get_text()
+            pdf_doc.close()
+        except Exception:
+            logger.exception("PDF extract error for %s", doc.file_name)
+        text = pdf_text[:4000] or "[не удалось извлечь текст]"
+        full_text = f"{caption}\n\n```\n{text}\n```" if caption else f"```\n{text}\n```"
+        user_text = caption or f"[PDF: {doc.file_name}]"
         await _stream_response(
             message, api, sessions, history, model, chat_id,
             user_display_text=user_text,
