@@ -89,18 +89,51 @@ DEFAULT_MODEL=deepseek-chat
 cargo build --release
 ```
 
-Бинарник: `target/release/deepseek_free_rust_bot`
+Бинарник: `target/release/deepseek_free_rust_bot` (полностью **статический** — не требует OpenSSL, glibc и прочих зависимостей на целевой машине).
 
 ---
 
 ## Деплой на VPS
 
-### Установка Rust (если нет)
+Бинарник статический (rustls вместо native-tls). Это значит:
+- **Не нужен** ни Rust, ни `pkg-config`, ни `libssl-dev` на VPS
+- Можно собрать на своём ПК и просто скопировать на сервер
+- Никаких проблем с версиями glibc и OpenSSL
+
+### Вариант A — собрать на ПК, скопировать на VPS (рекомендуется)
+
+**На домашнем ПК** (одна сборка):
+
+```bash
+git clone https://github.com/raebaexxx/deepseek_free_rust_bot_test.git
+cd deepseek_free_rust_bot_test
+cp .env.example .env   # заполнить TELOXIDE_TOKEN
+cargo build --release
+```
+
+**Скопировать на VPS:**
+
+```bash
+scp target/release/deepseek_free_rust_bot user@your-vps:/home/user/deepseek_free_rust_bot_test/
+scp .env user@your-vps:/home/user/deepseek_free_rust_bot_test/
+```
+
+На VPS Rust устанавливать **не нужно**.
+
+### Вариант B — собрать прямо на VPS
+
+Если решили собирать на VPS:
 
 ```bash
 curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 source "$HOME/.cargo/env"
+git clone https://github.com/raebaexxx/deepseek_free_rust_bot_test.git
+cd deepseek_free_rust_bot_test
+cp .env.example .env   # заполнить TELOXIDE_TOKEN
+cargo build --release
 ```
+
+> OpenSSL не требуется — бот использует `rustls` (чистый Rust TLS).
 
 ### Установка FreeDeepseekAPI
 
@@ -157,9 +190,9 @@ tmux new-session -d -s deepseek-api \
 **Сессия 2 — Telegram Bot:**
 
 ```bash
-cd deepseek_free_rust_bot_test
+cd /home/user/deepseek_free_rust_bot_test
 tmux new-session -d -s telegram-bot \
-    './target/release/deepseek_free_rust_bot'
+    './deepseek_free_rust_bot'
 ```
 
 ### Автозапуск при перезагрузке (crontab)
@@ -172,7 +205,7 @@ crontab -e
 
 ```
 @reboot tmux new-session -d -s deepseek-api 'cd /opt/FreeDeepseekAPI && NON_INTERACTIVE=1 npm start'
-@reboot tmux new-session -d -s telegram-bot 'cd /home/user/deepseek_free_rust_bot_test && /home/user/deepseek_free_rust_bot_test/target/release/deepseek_free_rust_bot'
+@reboot tmux new-session -d -s telegram-bot 'cd /home/user/deepseek_free_rust_bot_test && ./deepseek_free_rust_bot'
 ```
 
 ### Полезные tmux команды
