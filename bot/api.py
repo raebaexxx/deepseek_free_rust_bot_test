@@ -19,8 +19,8 @@ class FreeDeepseekError(Exception):
 class FreeDeepseekClient:
     def __init__(self, api_url: str, timeout: float = 120.0, connect_timeout: float = 10.0):
         url = api_url.rstrip("/")
-        self._base_url = url
         self._chat_url = f"{url}/chat/completions"
+        self._api_root = url.rstrip("/v1").rstrip("/")
         self._client = httpx.AsyncClient(
             timeout=httpx.Timeout(timeout, connect=connect_timeout),
             follow_redirects=True,
@@ -68,7 +68,7 @@ class FreeDeepseekClient:
                         yield content
 
     async def reset_session(self, session_id: str) -> bool:
-        url = f"{self._base_url}/reset-session?agent={session_id}"
+        url = f"{self._api_root}/reset-session?agent={session_id}"
         resp = await self._client.post(url)
         if resp.status_code == 200:
             logger.info("Session reset: %s", session_id)

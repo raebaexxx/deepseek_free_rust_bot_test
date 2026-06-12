@@ -77,6 +77,7 @@ async def cmd_start(message: Message, config: Config):
         "Отправь мне вопрос, и я отвечу через DeepSeek AI.\n\n"
         "Команды:\n"
         "/help — помощь\n"
+        "/new_chat — новый чат (сброс контекста DeepSeek)\n"
         "/reset — сбросить историю\n"
         "/model — выбрать модель"
     )
@@ -87,7 +88,8 @@ async def cmd_help(message: Message):
     await message.answer(
         "/start — начать\n"
         "/help — помощь\n"
-        "/reset — сбросить историю\n"
+        "/new_chat — новый чат (сброс контекста DeepSeek)\n"
+        "/reset — сбросить локальную историю\n"
         "/model — выбрать модель\n\n"
         "💡 Отправьте сообщение для диалога."
     )
@@ -108,6 +110,21 @@ async def cmd_reset(
     text = f"✅ История сброшена (удалено {count} сообщений, chat_id={chat_id})." if count else \
            f"✅ История пуста (chat_id={chat_id})."
     await message.answer(text)
+
+
+@router.message(Command("new_chat"))
+async def cmd_new_chat(
+    message: Message,
+    history: ConversationHistory,
+    api: FreeDeepseekClient,
+    sessions: SessionManager,
+):
+    chat_id = message.chat.id
+    session_id = await sessions.get_or_create(chat_id)
+    await history.clear(chat_id)
+    await api.reset_session(session_id)
+    logger.info("New chat created for %s (session=%s)", chat_id, session_id)
+    await message.answer("🆕 Создан новый чат. История очищена.")
 
 
 @router.message(Command("chat_id"))
