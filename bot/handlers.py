@@ -138,10 +138,9 @@ async def cb_model(
     logger.info("Model set for chat %s: %s, session rotated", chat_id, model)
     await query.answer()
 
-    escaped = model.replace("_", "\\_").replace("-", "\\-").replace(".", "\\.")
-    text = f"✅ Модель: `{escaped}`\n🆕 Создан новый чат."
+    text = f"✅ Модель: {model}\n🆕 Создан новый чат."
     if query.message:
-        await query.message.edit_text(text, parse_mode="MarkdownV2")
+        await query.message.edit_text(text)
 
 
 @router.message(F.text)
