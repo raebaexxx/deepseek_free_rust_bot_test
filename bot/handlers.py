@@ -42,13 +42,13 @@ async def cmd_help(message: Message):
 
 @router.message(Command("reset"))
 async def cmd_reset(message: Message, history: ConversationHistory):
-    history.clear(message.chat.id)
-    await message.answer("✅ История сброшена.")
+    count = await history.clear(message.chat.id)
+    await message.answer(f"✅ История сброшена (удалено {count} сообщений).")
 
 
 @router.message(Command("model"))
 async def cmd_model(message: Message, models: ModelManager):
-    current = models.get(message.chat.id)
+    current = await models.get(message.chat.id)
     await message.answer(
         f"🤖 Выберите модель (текущая: {current}):",
         reply_markup=keyboards.model_keyboard(),
@@ -59,7 +59,7 @@ async def cmd_model(message: Message, models: ModelManager):
 async def cb_model(query: CallbackQuery, models: ModelManager):
     model = query.data[6:]
     chat_id = query.message.chat.id if query.message else query.from_user.id
-    models.set(chat_id, model)
+    await models.set(chat_id, model)
     await query.answer()
 
     escaped = model.replace("_", "\\_").replace("-", "\\-").replace(".", "\\.")
@@ -84,10 +84,10 @@ async def handle_message(
     if not text:
         return
 
-    history.add(chat_id, "user", text)
+    await history.add(chat_id, "user", text)
 
-    model = models.get(chat_id)
-    msgs = history.get(chat_id)
+    model = await models.get(chat_id)
+    msgs = await history.get(chat_id)
 
     sent = await message.answer("⏳ Думаю...")
 
@@ -131,7 +131,6 @@ async def handle_message(
             pass
         return
 
-    # Bot API 10.1+: long messages, markdown rendering
     full = accumulated[: config.max_message_length]
     try:
         await sent.edit_text(full, parse_mode="MarkdownV2")
@@ -146,4 +145,4 @@ async def handle_message(
         except Exception:
             pass
 
-    history.add(chat_id, "assistant", accumulated)
+    await history.add(chat_id, "assistant", accumulated)

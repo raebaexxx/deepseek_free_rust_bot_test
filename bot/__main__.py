@@ -1,7 +1,8 @@
 import asyncio
 import logging
-import signal
 import sys
+
+import aiosqlite
 
 from aiogram import Bot, Dispatcher
 
@@ -27,8 +28,32 @@ async def main():
 
     bot = Bot(token=config.telegram_token)
 
-    history = ConversationHistory(config.history_limit)
-    models = ModelManager(config.default_model)
+    db = await aiosqlite.connect(config.db_path)
+    db.row_factory = aiosqlite.Row
+
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS conversations (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            chat_id INTEGER NOT NULL,
+            role TEXT NOT NULL,
+            content TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    await db.execute("""
+        CREATE TABLE IF NOT EXISTS model_preferences (
+            chat_id INTEGER PRIMARY KEY,
+            model TEXT NOT NULL
+        )
+    """)
+    await db.execute("""
+        CREATE INDEX IF NOT EXISTS idx_conversations_chat
+        ON conversations(chat_id)
+    """)
+    await db.commit()
+
+    history = ConversationHistory(db, config.history_limit)
+    models = ModelManager(db, config.default_model)
     api = FreeDeepseekClient(
         config.api_url,
         timeout=config.api_timeout,
@@ -44,24 +69,19 @@ async def main():
         config.default_model,
     )
 
-    loop = asyncio.get_running_loop()
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, lambda: asyncio.create_task(shutdown(bot, api, dp)))
-
-    await dp.start_polling(
-        bot,
-        config=config,
-        history=history,
-        models=models,
-        api=api,
-    )
-
-
-async def shutdown(bot: Bot, api: FreeDeepseekClient, dp: Dispatcher):
-    logger.info("Shutting down...")
-    await dp.stop_polling()
-    await api.close()
-    await bot.session.close()
+    try:
+        await dp.start_polling(
+            bot,
+            config=config,
+            history=history,
+            models=models,
+            api=api,
+        )
+    finally:
+        logger.info("Shutting down...")
+        await api.close()
+        await bot.session.close()
+        await db.close()
 
 
 if __name__ == "__main__":

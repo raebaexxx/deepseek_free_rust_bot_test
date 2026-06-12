@@ -11,6 +11,7 @@ class Config:
     telegram_token: str = os.getenv("TELOXIDE_TOKEN", "")
     api_url: str = os.getenv("DEEPSEEK_API_URL", "http://localhost:9655/v1")
     default_model: str = os.getenv("DEFAULT_MODEL", "deepseek-chat")
+    db_path: str = os.getenv("DB_PATH", "bot_data.db")
 
     history_limit: int = 20
     edit_interval: float = 0.4
