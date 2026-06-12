@@ -1,9 +1,9 @@
 import asyncio
+import io
 import logging
 import re
 import time
-
-import io
+from typing import AsyncIterator
 
 from aiogram import F, Router
 from aiogram.filters import Command
@@ -23,7 +23,6 @@ except ImportError:
     fitz = None
 
 router = Router()
-
 
 _BLOCK_PATTERNS = [
     (r'```([\s\S]*?)```', r'\1'),
@@ -77,22 +76,13 @@ def markdown_to_html(text: str) -> str:
 
 async def _stream_response(
     message: Message,
-    api: FreeDeepseekClient,
-    sessions: SessionManager,
     history: ConversationHistory,
-    model: str,
     chat_id: int,
     user_display_text: str,
-    api_messages: list[ChatMessage],
     config: Config,
+    stream_iter: AsyncIterator[str],
 ):
     await history.add(chat_id, "user", user_display_text)
-
-    session_id = await sessions.get_or_create(chat_id)
-    logger.debug(
-        "Chat %s: streaming to model %s (session=%s)",
-        chat_id, model, session_id,
-    )
 
     sent = await message.answer("⏳ Думаю...")
 
@@ -102,7 +92,7 @@ async def _stream_response(
 
     try:
         async with asyncio.timeout(config.api_timeout):
-            async for chunk in api.stream_chat(session_id, model, api_messages):
+            async for chunk in stream_iter:
                 accumulated += chunk
                 now = time.monotonic()
                 if now - last_edit >= config.edit_interval:
@@ -258,12 +248,11 @@ async def handle_message(
 
     chat_id = message.chat.id
     model = await models.get(chat_id)
+    session_id = await sessions.get_or_create(chat_id)
 
     await _stream_response(
-        message, api, sessions, history, model, chat_id,
-        user_display_text=text,
-        api_messages=[ChatMessage("user", text)],
-        config=config,
+        message, history, chat_id, text, config,
+        stream_iter=api.stream_chat(session_id, model, [ChatMessage("user", text)]),
     )
 
 
@@ -271,9 +260,6 @@ async def handle_message(
 async def handle_photo(
     message: Message,
     history: ConversationHistory,
-    models: ModelManager,
-    api: FreeDeepseekClient,
-    sessions: SessionManager,
     config: Config,
 ):
     chat_id = message.chat.id
@@ -281,12 +267,24 @@ async def handle_photo(
     if not caption:
         await message.answer("📷 Пожалуйста, добавьте текстовое описание к фото.")
         return
-    model = await models.get(chat_id)
+
+    sent = await message.answer("⏳ Загружаю фото...")
+    try:
+        from . import deepseek_web
+        auth = deepseek_web.load_auth()
+        file = await message.bot.get_file(message.photo[-1].file_id)
+        buf = io.BytesIO()
+        await message.bot.download(file, destination=buf)
+        file_id = await deepseek_web.upload_file(buf.getvalue(), "photo.jpg", "image/jpeg", auth)
+        await sent.edit_text("⏳ Анализирую...")
+    except Exception as e:
+        logger.exception("Photo upload failed")
+        await sent.edit_text(f"⚠️ Ошибка загрузки: {e}")
+        return
+
     await _stream_response(
-        message, api, sessions, history, model, chat_id,
-        user_display_text=caption,
-        api_messages=[ChatMessage("user", caption)],
-        config=config,
+        message, history, chat_id, caption, config,
+        stream_iter=deepseek_web.stream_chat(caption, auth, file_ids=[file_id]),
     )
 
 
@@ -303,19 +301,40 @@ async def handle_document(
     doc = message.document
     mime = doc.mime_type or ""
     caption = (message.caption or "").strip()
-    model = await models.get(chat_id)
 
-    if mime.startswith("image/"):
+    if mime.startswith("image/") or mime == "application/pdf":
         if not caption:
-            await message.answer("📷 Пожалуйста, добавьте текстовое описание к изображению.")
+            hint = "📷 Пожалуйста, добавьте текстовое описание к изображению." if mime.startswith("image/") else "📄 Пожалуйста, добавьте описание к PDF."
+            await message.answer(hint)
             return
+
+        sent = await message.answer("⏳ Загружаю файл...")
+        try:
+            from . import deepseek_web
+            auth = deepseek_web.load_auth()
+            file = await message.bot.get_file(doc.file_id)
+            buf = io.BytesIO()
+            await message.bot.download(file, destination=buf)
+            mime_type = mime
+            filename = doc.file_name or "file"
+            file_id = await deepseek_web.upload_file(buf.getvalue(), filename, mime_type, auth)
+            await sent.edit_text("⏳ Обрабатываю...")
+        except Exception as e:
+            logger.exception("File upload failed")
+            await sent.edit_text(f"⚠️ Ошибка загрузки: {e}")
+            return
+
+        prompt = caption
         await _stream_response(
-            message, api, sessions, history, model, chat_id,
-            user_display_text=caption,
-            api_messages=[ChatMessage("user", caption)],
-            config=config,
+            message, history, chat_id, caption, config,
+            stream_iter=deepseek_web.stream_chat(prompt, auth, file_ids=[file_id]),
         )
-    elif mime.startswith("text/") or mime in (
+        return
+
+    model = await models.get(chat_id)
+    session_id = await sessions.get_or_create(chat_id)
+
+    if mime.startswith("text/") or mime in (
         "application/json", "application/xml", "application/javascript",
         "application/x-python-code",
     ):
@@ -326,34 +345,8 @@ async def handle_document(
         full_text = f"{caption}\n\n```\n{text[:4000]}\n```" if caption else f"```\n{text[:4000]}\n```"
         user_text = caption or f"[файл: {doc.file_name}]"
         await _stream_response(
-            message, api, sessions, history, model, chat_id,
-            user_display_text=user_text,
-            api_messages=[ChatMessage("user", full_text)],
-            config=config,
-        )
-    elif mime == "application/pdf":
-        if fitz is None:
-            await message.answer("📄 PDF-поддержка недоступна (установите PyMuPDF: pip install PyMuPDF)")
-            return
-        file = await message.bot.get_file(doc.file_id)
-        buf = io.BytesIO()
-        await message.bot.download(file, destination=buf)
-        pdf_text = ""
-        try:
-            pdf_doc = fitz.open(stream=buf.getvalue(), filetype="pdf")
-            for page in pdf_doc:
-                pdf_text += page.get_text()
-            pdf_doc.close()
-        except Exception:
-            logger.exception("PDF extract error for %s", doc.file_name)
-        text = pdf_text[:4000] or "[не удалось извлечь текст]"
-        full_text = f"{caption}\n\n```\n{text}\n```" if caption else f"```\n{text}\n```"
-        user_text = caption or f"[PDF: {doc.file_name}]"
-        await _stream_response(
-            message, api, sessions, history, model, chat_id,
-            user_display_text=user_text,
-            api_messages=[ChatMessage("user", full_text)],
-            config=config,
+            message, history, chat_id, user_text, config,
+            stream_iter=api.stream_chat(session_id, model, [ChatMessage("user", full_text)]),
         )
     else:
         meta = f"Файл: {doc.file_name or 'unknown'}"
@@ -362,8 +355,6 @@ async def handle_document(
             meta += f" ({size_kb:.0f} KB)"
         user_text = caption or meta
         await _stream_response(
-            message, api, sessions, history, model, chat_id,
-            user_display_text=user_text,
-            api_messages=[ChatMessage("user", user_text)],
-            config=config,
+            message, history, chat_id, user_text, config,
+            stream_iter=api.stream_chat(session_id, model, [ChatMessage("user", user_text)]),
         )
