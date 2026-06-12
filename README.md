@@ -104,13 +104,45 @@ source "$HOME/.cargo/env"
 
 ### Установка FreeDeepseekAPI
 
+Поскольку на VPS нет GUI, авторизация делается в два этапа.
+
+**Шаг 1. Домашний ПК (есть браузер, Chrome):**
+
 ```bash
-git clone https://github.com/ForgetMeAI/FreeDeepseekAPI.git /opt/FreeDeepseekAPI
-cd /opt/FreeDeepseekAPI
-npm run auth        # авторизация в DeepSeek (нужен GUI)
-# После авторизации скопировать deepseek-auth.json на VPS
+git clone https://github.com/ForgetMeAI/FreeDeepseekAPI.git
+cd FreeDeepseekAPI
+npm run auth
+# Выбрать пункт 1
+# Откроется Chrome — войти в DeepSeek, написать любое сообщение ("ok")
+# Вернуться в терминал и нажать Enter
 ```
 
+После этого появится файл `deepseek-auth.json`.
+
+**Шаг 2. Скопировать на VPS:**
+
+```bash
+scp deepseek-auth.json user@your-vps:/opt/FreeDeepseekAPI/
+```
+
+**Шаг 3. Импортировать на VPS и запустить:**
+
+```bash
+# Клонировать репозиторий
+git clone https://github.com/ForgetMeAI/FreeDeepseekAPI.git /opt/FreeDeepseekAPI
+cd /opt/FreeDeepseekAPI
+
+# Импортировать сессию
+npm run auth:import -- --input ./deepseek-auth.json
+
+# Защитить файл
+chmod 600 deepseek-auth.json
+
+# Запустить
+NON_INTERACTIVE=1 npm start
+```
+
+> Альтернатива: можно экспортировать cookies из браузера и передать через переменную `DEEPSEEK_TOKEN`.
 > Подробнее: [FreeDeepseekAPI — VPS / headless запуск](https://github.com/ForgetMeAI/FreeDeepseekAPI?tab=readme-ov-file#-vps--headless-%D0%B7%D0%B0%D0%BF%D1%83%D1%81%D0%BA)
 
 ### Запуск через tmux
